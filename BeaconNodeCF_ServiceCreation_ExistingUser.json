@@ -1,0 +1,300 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+
+  "Description": "AWS Geth and Beacon Node Cloudformation template for Existing User",
+
+  "Parameters": {
+    "ClusterName": {
+      "Type": "String",
+      "Default": "Beacon-Cluster-2",
+      "Description": "Enter the ClusterName in which you want to create your Geth and Beacon Services."
+    }
+  },
+
+  "Resources": {
+    "IAMRole": {
+      "Type": "AWS::IAM::Role",
+
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+
+          "Statement": [
+            {
+              "Effect": "Allow",
+
+              "Principal": {
+                "Service": ["ecs-tasks.amazonaws.com"]
+              },
+
+              "Action": ["sts:AssumeRole"]
+            }
+          ]
+        },
+
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/AWSMarketplaceMeteringRegisterUsage"
+        ],
+
+        "RoleName": {
+          "Fn::Join": ["-", ["BeaconRole", { "Ref": "ClusterName" }]]
+        },
+
+        "Path": "/"
+      }
+    },
+
+    "LNGethTaskDefinition": {
+      "Type": "AWS::ECS::TaskDefinition",
+
+      "Properties": {
+        "RequiresCompatibilities": ["EC2"],
+        "ContainerDefinitions": [
+          {
+            "Name": "geth_container",
+            "MountPoints": [
+              {
+                "ContainerPath": "/root",
+                "SourceVolume": "gethvol"
+              }
+            ],
+            "Image": "709825985650.dkr.ecr.us-east-1.amazonaws.com/launch-nodes/geth:v1.10.13",
+            "Cpu": 0,
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "GethContainerLogGroup"
+                },
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "ecs"
+              }
+            },
+            "PortMappings": [
+              {
+                "ContainerPort": 8545,
+                "HostPort": 8545,
+                "Protocol": "tcp"
+              },
+              {
+                "ContainerPort": 30303,
+                "HostPort": 30303,
+                "Protocol": "tcp"
+              }
+            ],
+            "Essential": true,
+            "Command": [
+              "--datadir=/root",
+              "--http",
+              "--http.port=8545",
+              "--http.addr=0.0.0.0",
+              "--http.vhosts=*",
+              "--http.api=eth,net,web3,personal"
+            ],
+            "Environment": [
+              {
+                "Name": "ECS_DATADIR",
+                "Value": "/root"
+              },
+              {
+                "Name": "ECS_HOST_DATA_DIR",
+                "Value": "/home/ec2-user/.geth"
+              }
+            ],
+            "MemoryReservation": 2048,
+            "WorkingDirectory": "/home/ec2-user/.geth/"
+          },
+          {
+            "Name": "metering_container",
+            "MountPoints": [],
+            "Image": "117940112483.dkr.ecr.us-east-1.amazonaws.com/2dbd12c2-8561-4669-889b-166cc1c47b47/cg-4030084019/meter_v1:2.9-latest",
+            "Cpu": 0,
+
+            "PortMappings": [
+              {
+                "ContainerPort": 6010,
+                "HostPort": 6010,
+                "Protocol": "tcp"
+              }
+            ],
+            "Essential": true,
+
+            "Environment": [
+              {
+                "Name": "ECS_ENABLE_TASK_IAM_ROLE_NETWORK_HOST",
+                "Value": "true"
+              }
+            ],
+            "MemoryReservation": 500
+          }
+        ],
+
+        "Family": {
+          "Fn::Join": ["-", ["aws_geth_task", { "Ref": "ClusterName" }]]
+        },
+
+        "NetworkMode": "host",
+        "TaskRoleArn": {
+          "Fn::GetAtt": "IAMRole.Arn"
+        },
+
+        "Volumes": [
+          {
+            "Name": "gethvol",
+            "Host": {
+              "SourcePath": "/home/ec2-user/.geth"
+            }
+          }
+        ]
+      }
+    },
+    "GethContainerLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Join": ["-", ["aws_geth_task", { "Ref": "ClusterName" }]]
+        }
+      }
+    },
+
+    "LNBeaconTaskDefinition": {
+      "Type": "AWS::ECS::TaskDefinition",
+
+      "Properties": {
+        "RequiresCompatibilities": ["EC2"],
+        "ContainerDefinitions": [
+          {
+            "Name": "beacon_container",
+            "MountPoints": [
+              {
+                "ContainerPath": "/data",
+                "SourceVolume": "datavol"
+              }
+            ],
+            "Image": "709825985650.dkr.ecr.us-east-1.amazonaws.com/launch-nodes/beaconnode:v2.0.4",
+            "Cpu": 0,
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "BeaconContainerLogGroup"
+                },
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "ecs"
+              }
+            },
+            "PortMappings": [
+              {
+                "ContainerPort": 4000,
+                "HostPort": 4000,
+                "Protocol": "tcp"
+              },
+              {
+                "ContainerPort": 13000,
+                "HostPort": 13000,
+                "Protocol": "tcp"
+              },
+              {
+                "ContainerPort": 12000,
+                "HostPort": 12000,
+                "Protocol": "udp"
+              }
+            ],
+            "Essential": true,
+            "Command": [
+              "--datadir=/data",
+              "--http-web3provider=http://127.0.0.1:8545/",
+              "--monitoring-host=0.0.0.0",
+              "--monitoring-port=8080",
+              "--block-batch-limit=512",
+              "--p2p-max-peers=100",
+              "--rpc-host=0.0.0.0",
+              "--accept-terms-of-use=true"
+            ],
+            "Environment": [
+              {
+                "Name": "ECS_DATADIR",
+                "Value": "/data"
+              },
+              {
+                "Name": "ECS_HOST_DATA_DIR",
+                "Value": "/home/ec2-user/.geth"
+              }
+            ],
+            "MemoryReservation": 3096,
+            "WorkingDirectory": "/home/ec2-user/.eth2/"
+          }
+        ],
+
+        "Family": {
+          "Fn::Join": ["-", ["aws_beaconOnly", { "Ref": "ClusterName" }]]
+        },
+
+        "NetworkMode": "host",
+
+        "Volumes": [
+          {
+            "Name": "datavol",
+            "Host": {
+              "SourcePath": "/home/ec2-user/.eth2"
+            }
+          }
+        ]
+      }
+    },
+
+    "BeaconContainerLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Join": ["-", ["aws_beaconOnly", { "Ref": "ClusterName" }]]
+        }
+      }
+    },
+
+    "LNGethService": {
+      "Type": "AWS::ECS::Service",
+
+      "Properties": {
+        "Cluster": {
+          "Ref": "ClusterName"
+        },
+        "DesiredCount": 1,
+        "LaunchType": "EC2",
+        "DeploymentConfiguration": {
+          "MinimumHealthyPercent": 0,
+          "MaximumPercent": 100
+        },
+        "ServiceName": "Geth-Service",
+        "TaskDefinition": {
+          "Ref": "LNGethTaskDefinition"
+        }
+      }
+    },
+
+    "LNBeaconService": {
+      "Type": "AWS::ECS::Service",
+      "DependsOn": "LNGethService",
+      "Properties": {
+        "Cluster": {
+          "Ref": "ClusterName"
+        },
+        "DesiredCount": 1,
+        "LaunchType": "EC2",
+        "DeploymentConfiguration": {
+          "MinimumHealthyPercent": 0,
+          "MaximumPercent": 100
+        },
+        "ServiceName": "Beacon-Service",
+        "TaskDefinition": {
+          "Ref": "LNBeaconTaskDefinition"
+        }
+      }
+    }
+  }
+}
